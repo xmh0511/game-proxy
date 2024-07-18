@@ -4,6 +4,6 @@ members = [
     "crates/*"
 ]
 [workspace.dependencies]
-tokio = {version = "1",features = ["macros","rt-multi-thread","net","time","sync","io-util"]}
+tokio = {version = "1",features = ["macros","rt-multi-thread","net","time","sync","io-util","signal"]}
 clap = {version = "4.5.9", features = ["derive"]}
 chrono = {version = "0.4.38" }

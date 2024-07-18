@@ -354,17 +354,26 @@ async fn main() {
         }
     });
 
-    //对公用户进行UDP服务
-    let mut buf = [0u8; u16::MAX as usize];
-    while let Ok((size, from)) = socket.recv_from(&mut buf).await {
-        dprintln!("udp packet from who {from}");
-        //println!("recv packet from {from} len:{size}");
-        let _ = sender
-            .send(Event::UserSide(Client {
-                payload: buf[..size].to_owned(),
-                dest: from,
-                src: socket.clone(),
-            }))
-            .await;
-    }
+    tokio::spawn(async move {
+        //对公用户进行UDP服务
+        let mut buf = [0u8; u16::MAX as usize];
+        while let Ok((size, from)) = socket.recv_from(&mut buf).await {
+            dprintln!("udp packet from who {from}");
+            //println!("recv packet from {from} len:{size}");
+            let _ = sender
+                .send(Event::UserSide(Client {
+                    payload: buf[..size].to_owned(),
+                    dest: from,
+                    src: socket.clone(),
+                }))
+                .await;
+        }
+    });
+    use tokio::signal;
+    signal::ctrl_c().await.expect("failed to listen for event");
+    //相当于清理操作
+    shared_sender
+        .send(Event::ConrolErr)
+        .await
+        .expect("clear error");
 }
