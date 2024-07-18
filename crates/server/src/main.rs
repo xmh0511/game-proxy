@@ -151,7 +151,7 @@ async fn main() {
                     let dest_str = dest.to_string();
                     //是否有记录，如果没有记录代表首次请求，记录到user_map中
                     if user_map.get(&dest_str).is_none() {
-                        dprintln!("{}的首次连接", dest_str);
+                        println!("{}的首次连接", dest_str);
                         if let Some(stream) = &mut control_stream {
                             dprintln!("控制客户端创建对应连接");
                             //控制代理客户端创建对应的udp socket和数据包传输连接
@@ -347,7 +347,8 @@ async fn main() {
                                                 .send(Event::Response(Response { payload, dest }))
                                                 .await;
                                         }
-                                        _ => {
+                                        e => {
+                                            println!("read error {e:?} for {dest_record}");
                                             let _ = sender4
                                                 .send(Event::RemoveUser(dest_record.clone()))
                                                 .await;
@@ -355,7 +356,8 @@ async fn main() {
                                         }
                                     }
                                 }
-                                _ => {
+                                e => {
+                                    println!("read error {e:?} for {dest_record}");
                                     let _ =
                                         sender4.send(Event::RemoveUser(dest_record.clone())).await;
                                     break;
@@ -374,7 +376,7 @@ async fn main() {
         let mut buf = [0u8; u16::MAX as usize];
         while let Ok((size, from)) = socket.recv_from(&mut buf).await {
             dprintln!("udp packet from who {from}");
-            //println!("recv packet from {from} len:{size}");
+            println!("recv packet from {from} len:{size}");
             let _ = sender
                 .send(Event::UserSide(Client {
                     payload: buf[..size].to_owned(),
