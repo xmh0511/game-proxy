@@ -132,9 +132,13 @@ async fn main() {
                     }
                 }
                 // 创建player到服务器时对应的代理到服务器的通道
-                let stream = TcpStream::connect(format!("{server_ip}:{proxy_packet_port}"))
-                    .await
-                    .unwrap();
+                let stream =
+                    match TcpStream::connect(format!("{server_ip}:{proxy_packet_port}")).await {
+                        Ok(s) => s,
+                        Err(_) => {
+                            continue;
+                        }
+                    };
                 let (mut stream_reader, mut stream_writer) = tokio::io::split(stream);
                 // 上报该连接对应的身份信息
                 let Ok(dest) = dest.parse::<SocketAddr>() else {
