@@ -63,6 +63,11 @@ async fn read_package(reader: &mut ReadHalf<TcpStream>) -> std::io::Result<Vec<u
     Err(Error::new(ErrorKind::Other, "read header error"))
 }
 
+fn now_time()->String{
+	let now = chrono::Local::now();
+	now.naive_local().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -119,7 +124,7 @@ async fn main() {
                 // 读取远程第一次的数据包，可能为空
                 match read_package(&mut reader).await {
                     Ok(payload) => {
-                        println!("first recv packet from {dest} len: {}", payload.len());
+                        println!("{}首次从{dest}接受数据, 包大小{}字节", now_time(),payload.len());
                         if let Err(_) = udp.send(&payload).await {
                             continue;
                         }
@@ -187,12 +192,13 @@ async fn main() {
                                 );
                                 match timeout.await {
                                     Ok(Ok(payload)) => {
-                                        println!("recv packet from {dest} len:{}", payload.len());
+                                        println!("{} 从{dest}接收到数据包, 包大小{}字节",now_time(),payload.len());
                                         if let Err(_) = udp2.send(&payload).await {
                                             break;
                                         }
                                     }
-                                    _ => {
+                                    e => {
+										println!("{} 与远程{dest}的数据交换通道异常，原因:{e:?}",now_time());
                                         break;
                                     }
                                 }

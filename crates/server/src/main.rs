@@ -150,7 +150,7 @@ async fn main() {
                                 tokio::spawn(async move {
                                     //10秒内如果没有成功创建通信连接，则删除用户
                                     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                                    println!("执行了remove操作");
+                                    println!("执行了remove操作 {identifier}");
                                     if let Some(sender) = sender_weak.upgrade() {
                                         _ = sender.send(Event::RemoveUser(identifier)).await;
                                     }
@@ -345,7 +345,7 @@ async fn main() {
     let mut buf = [0u8; u16::MAX as usize];
     while let Ok((size, from)) = socket.recv_from(&mut buf).await {
         dprintln!("udp packet from who {from}");
-        println!("recv packet from {from} len:{size}");
+        //println!("recv packet from {from} len:{size}");
         let _ = sender
             .send(Event::UserSide(Client {
                 payload: buf[..size].to_owned(),
