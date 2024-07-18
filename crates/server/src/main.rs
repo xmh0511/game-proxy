@@ -30,7 +30,7 @@ struct Args {
     wait_timeout: u64,
 
     #[arg(short, long, default_value_t = false)]
-    debug: bool,
+    dev: bool,
 }
 
 struct Client {
@@ -132,7 +132,7 @@ async fn main() {
         port,
         timeout: time_out_seconds,
         wait_timeout,
-        debug,
+        dev: debug,
     } = args;
     let pub_service_port: u16 = port;
     let control_service_port: u16 = control;
