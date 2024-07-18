@@ -170,8 +170,12 @@ async fn main() {
                             //控制代理客户端创建对应的udp socket和数据包传输连接
                             let command = build_package(payload, dest);
                             //控制连接出现问题，那么情况所有状态，因为后续服务都不能正常提供
-                            if let Err(_) = stream.write_all(&command[..]).await {
+                            if let Err(e) = stream.write_all(&command[..]).await {
                                 // 尝试关闭该控制连接
+                                debug_p!(
+                                    debug,
+                                    "向客户端发送创建数据包通信连接的命令出现问题 {e:?}"
+                                );
                                 let _ = stream.shutdown().await;
                                 control_stream = None;
                                 user_map.clear();

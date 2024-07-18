@@ -129,13 +129,16 @@ async fn main() {
             if let Ok(dest) = read_package(&mut reader).await {
                 // 读取远程请求创建对应连接时发送的身份
                 let dest = String::from_utf8_lossy(&dest).to_string();
+                println!("收到远程让客户端为{dest}创建数据通道的信号");
                 // 创建本地的对应实例
                 let udp = Arc::new(if let Ok(udp) = UdpSocket::bind("0.0.0.0:0").await {
                     udp
                 } else {
+                    println!("为{dest}创建对等的UDP客户端失败");
                     continue;
                 });
                 if let Err(_) = udp.connect(format!("{udp_service_target}")).await {
+                    println!("为{dest}创建对等的UDP客户端并进行connect时失败");
                     continue;
                 }
                 // 读取远程第一次的数据包，可能为空
