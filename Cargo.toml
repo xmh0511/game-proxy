@@ -5,3 +5,4 @@ members = [
 ]
 [workspace.dependencies]
 tokio = {version = "1",features = ["macros","rt-multi-thread","net","time","sync","io-util"]}
+clap = {version = "4.5.9", features = ["derive"]}

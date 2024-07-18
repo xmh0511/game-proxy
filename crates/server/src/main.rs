@@ -4,6 +4,24 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf},
     net::{TcpListener, TcpStream, UdpSocket},
 };
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// The control port between public server and this client
+    #[arg(short, long)]
+    control: u16,
+
+    /// The data transport port between public server and this client
+    #[arg(short, long)]
+    transport: u16,
+
+    /// The public port for internet
+	#[arg(short, long)]
+    port: u16,
+}
+
 
 struct Client {
     payload: Vec<u8>,
@@ -77,11 +95,14 @@ macro_rules! dprintln {
 
 #[tokio::main]
 async fn main() {
-    const PUB_SERVICE_PORT: u16 = 6600;
-    const CONTROL_SERVICE_PORT: u16 = 6606;
-    const PROXY_PACKET_PORT: u16 = 6607;
+	let args = Args::parse();
+	let Args { control, transport, port } = args;
+    let pub_service_port: u16 = port;
+    let control_service_port: u16 = control;
+	// 代理客户端和服务器之间代理数据的传输端口
+    let proxy_packet_port: u16 = transport;
     // 服务器对公UDP服务
-    let socket = UdpSocket::bind(format!("0.0.0.0:{PUB_SERVICE_PORT}"))
+    let socket = UdpSocket::bind(format!("0.0.0.0:{pub_service_port}"))
         .await
         .unwrap();
     let socket = Arc::new(socket);
@@ -213,7 +234,7 @@ async fn main() {
     });
     let sender2 = sender.clone();
     let sender3 = sender.clone();
-    let tcp = TcpListener::bind(format!("0.0.0.0:{CONTROL_SERVICE_PORT}"))
+    let tcp = TcpListener::bind(format!("0.0.0.0:{control_service_port}"))
         .await
         .unwrap();
     tokio::spawn(async move {
@@ -252,7 +273,7 @@ async fn main() {
     });
 
     // 代理客户端和服务器转发数据包的连接服务
-    let tcp = TcpListener::bind(format!("0.0.0.0:{PROXY_PACKET_PORT}"))
+    let tcp = TcpListener::bind(format!("0.0.0.0:{proxy_packet_port}"))
         .await
         .unwrap();
     tokio::spawn(async move {

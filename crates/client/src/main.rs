@@ -5,6 +5,32 @@ use tokio::{
     net::{TcpStream, UdpSocket},
 };
 
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Public server's IP
+    #[arg(short, long)]
+    server: String,
+
+    /// The control port between public server and this client
+    #[arg(short, long)]
+    control: u16,
+
+    /// The data transport port between public server and this client
+    #[arg(short, long)]
+    transport: u16,
+
+    /// which sevice this client proxy to
+    #[arg(short = 'd', long)]
+    target: String,
+
+    /// how many numbers the client tries to connect server after disconnection
+    #[arg(short, long, default_value_t = 5)]
+    retry: u8,
+}
+
 fn build_package(payload: Vec<u8>, dest: SocketAddr) -> Vec<u8> {
     let mut command = Vec::new();
     let dest_str = dest.to_string();
@@ -39,106 +65,136 @@ async fn read_package(reader: &mut ReadHalf<TcpStream>) -> std::io::Result<Vec<u
 
 #[tokio::main]
 async fn main() {
+    let args = Args::parse();
+    let Args {
+        server: server_ip,
+        control,
+        transport,
+        target,
+        retry,
+    } = args;
     // 控制服务端口
-    const CONTROL_SERVICE_PORT: u16 = 6606;
-    // 本地UDP服务端口
-    const UDP_SERVICE_PORT: u16 = 8080;
+    let control_service_port: u16 = control;
+    // 本地UDP服务
+    let udp_service_target = target;
     // 创建对等连接端口
-    const PROXY_PACKET_PORT: u16 = 6607;
-    //尝试连接服务器，如果失败直接报错
-    let stream = TcpStream::connect(format!("127.0.0.1:{CONTROL_SERVICE_PORT}"))
-        .await
-        .unwrap();
-    let (mut reader, mut _writer) = tokio::io::split(stream);
+    let proxy_packet_port: u16 = transport;
+    let mut count_retry = 0;
 
-    loop {
-        if let Ok(dest) = read_package(&mut reader).await {
-            // 读取远程请求创建对应连接时发送的身份
-            let dest = String::from_utf8_lossy(&dest).to_string();
-            // 创建本地的对应实例
-            let udp = Arc::new(if let Ok(udp) = UdpSocket::bind("0.0.0.0:0").await {
-                udp
-            } else {
-                continue;
-            });
-            if let Err(_) = udp.connect(format!("127.0.0.1:{UDP_SERVICE_PORT}")).await {
-                continue;
+    'Reconn: loop {
+        if count_retry > retry {
+            panic!("fail to connect server within {retry} times");
+        }
+        //尝试连接服务器，如果失败直接报错
+        let stream = match TcpStream::connect(format!("{server_ip}:{control_service_port}")).await {
+            Ok(s) => {
+				println!("连接{server_ip}:{control_service_port}服务器成功");
+                count_retry = 0;
+                s
             }
-            // 读取远程第一次的数据包，可能为空
-            match read_package(&mut reader).await {
-                Ok(payload) => {
-                    if let Err(_) = udp.send(&payload).await {
-                        continue;
+            Err(_) => {
+                count_retry += 1;
+                if count_retry <= retry {
+                    println!("5秒后重新重新连接服务器");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue 'Reconn;
+            }
+        };
+        let (mut reader, mut _writer) = tokio::io::split(stream);
+
+        loop {
+            if let Ok(dest) = read_package(&mut reader).await {
+                // 读取远程请求创建对应连接时发送的身份
+                let dest = String::from_utf8_lossy(&dest).to_string();
+                // 创建本地的对应实例
+                let udp = Arc::new(if let Ok(udp) = UdpSocket::bind("0.0.0.0:0").await {
+                    udp
+                } else {
+                    continue;
+                });
+                if let Err(_) = udp.connect(format!("{udp_service_target}")).await {
+                    continue;
+                }
+                // 读取远程第一次的数据包，可能为空
+                match read_package(&mut reader).await {
+                    Ok(payload) => {
+                        if let Err(_) = udp.send(&payload).await {
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        if e.kind() == std::io::ErrorKind::NotConnected {
+                            //panic!("an error occurs on the connection");
+                            //尝试整个重新连接
+                            continue 'Reconn;
+                        }
                     }
                 }
-                Err(e) => {
-                    if e.kind() == std::io::ErrorKind::NotConnected {
-                        panic!("an error occurs on the connection");
-                    }
+                // 创建player到服务器时对应的代理到服务器的通道
+                let stream = TcpStream::connect(format!("{server_ip}:{proxy_packet_port}"))
+                    .await
+                    .unwrap();
+                let (mut stream_reader, mut stream_writer) = tokio::io::split(stream);
+                // 上报该连接对应的身份信息
+                let Ok(dest) = dest.parse::<SocketAddr>() else {
+                    continue;
+                };
+                let identifier = build_package(Vec::new(), dest);
+                if let Err(_) = stream_writer.write_all(&identifier[..]).await {
+                    //发送身份信息失败
+                    continue;
                 }
-            }
-            // 创建player到服务器时对应的代理到服务器的通道
-            let stream = TcpStream::connect(format!("127.0.0.1:{PROXY_PACKET_PORT}"))
-                .await
-                .unwrap();
-            let (mut stream_reader, mut stream_writer) = tokio::io::split(stream);
-            // 上报该连接对应的身份信息
-            let Ok(dest) = dest.parse::<SocketAddr>() else {
-                continue;
-            };
-            let identifier = build_package(Vec::new(), dest);
-            if let Err(_) = stream_writer.write_all(&identifier[..]).await {
-                //发送身份信息失败
-                continue;
-            }
 
-            let udp1 = udp.clone();
-            // 接受本地UDP服务的响应并发送到远程服务器
-            tokio::spawn(async move {
-                let mut buf = [0u8; u16::MAX as usize];
-                loop {
-                    let size = udp1.recv(&mut buf).await?;
-                    //println!("client {dest}");
-                    let package = build_package(buf[..size].to_owned(), dest);
-                    //println!("read some payload from udp {}", package.len());
-                    stream_writer.write_all(&package[..]).await?;
-                    //println!("{r:?}");
-                }
-                #[allow(unreachable_code)]
-                Ok::<(), std::io::Error>(())
-            });
-            let udp2 = udp.clone();
-            // 读取远程服务器代理到本地的UDP数据包
-            tokio::spawn(async move {
-                loop {
-                    // 不应该超过1分钟没有数据请求
-                    let timeout = tokio::time::timeout(
-                        std::time::Duration::from_secs(60),
-                        read_package(&mut stream_reader),
-                    );
-                    if let Ok(Ok(_)) = timeout.await {
-                        //忽略传过来的身份信息，身份信息由闭包记录了
+                let udp1 = udp.clone();
+                // 接受本地UDP服务的响应并发送到远程服务器
+                tokio::spawn(async move {
+                    let mut buf = [0u8; u16::MAX as usize];
+                    loop {
+                        let size = udp1.recv(&mut buf).await?;
+                        //println!("client {dest}");
+                        let package = build_package(buf[..size].to_owned(), dest);
+                        //println!("read some payload from udp {}", package.len());
+                        stream_writer.write_all(&package[..]).await?;
+                        //println!("{r:?}");
+                    }
+                    #[allow(unreachable_code)]
+                    Ok::<(), std::io::Error>(())
+                });
+                let udp2 = udp.clone();
+                // 读取远程服务器代理到本地的UDP数据包
+                tokio::spawn(async move {
+                    loop {
+                        // 不应该超过1分钟没有数据请求
                         let timeout = tokio::time::timeout(
                             std::time::Duration::from_secs(60),
                             read_package(&mut stream_reader),
                         );
-                        match timeout.await {
-                            Ok(Ok(payload)) => {
-                                if let Err(_) = udp2.send(&payload).await {
+                        if let Ok(Ok(_)) = timeout.await {
+                            //忽略传过来的身份信息，身份信息由闭包记录了
+                            let timeout = tokio::time::timeout(
+                                std::time::Duration::from_secs(60),
+                                read_package(&mut stream_reader),
+                            );
+                            match timeout.await {
+                                Ok(Ok(payload)) => {
+                                    if let Err(_) = udp2.send(&payload).await {
+                                        break;
+                                    }
+                                }
+                                _ => {
                                     break;
                                 }
                             }
-                            _ => {
-                                break;
-                            }
+                        } else {
+                            break;
                         }
-                    } else {
-                        break;
                     }
-                }
-            });
-        } else {
-            panic!("an error occurs on the connection");
+                });
+            } else {
+                //panic!("an error occurs on the connection");
+                continue 'Reconn;
+            }
         }
     }
 }
