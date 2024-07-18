@@ -88,7 +88,7 @@ async fn main() {
         //尝试连接服务器，如果失败直接报错
         let stream = match TcpStream::connect(format!("{server_ip}:{control_service_port}")).await {
             Ok(s) => {
-				println!("连接{server_ip}:{control_service_port}服务器成功");
+                println!("连接{server_ip}:{control_service_port}服务器成功");
                 count_retry = 0;
                 s
             }

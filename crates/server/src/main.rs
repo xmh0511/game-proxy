@@ -1,10 +1,10 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
+use clap::Parser;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf},
     net::{TcpListener, TcpStream, UdpSocket},
 };
-use clap::Parser;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -18,10 +18,9 @@ struct Args {
     transport: u16,
 
     /// The public port for internet
-	#[arg(short, long)]
+    #[arg(short, long)]
     port: u16,
 }
-
 
 struct Client {
     payload: Vec<u8>,
@@ -95,11 +94,15 @@ macro_rules! dprintln {
 
 #[tokio::main]
 async fn main() {
-	let args = Args::parse();
-	let Args { control, transport, port } = args;
+    let args = Args::parse();
+    let Args {
+        control,
+        transport,
+        port,
+    } = args;
     let pub_service_port: u16 = port;
     let control_service_port: u16 = control;
-	// 代理客户端和服务器之间代理数据的传输端口
+    // 代理客户端和服务器之间代理数据的传输端口
     let proxy_packet_port: u16 = transport;
     // 服务器对公UDP服务
     let socket = UdpSocket::bind(format!("0.0.0.0:{pub_service_port}"))
