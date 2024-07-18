@@ -29,8 +29,8 @@ struct Args {
     #[arg(long, default_value_t = 10)]
     wait_timeout: u64,
 
-    #[arg(short, long, default_value_t = false)]
-    dev: bool,
+    #[arg(short, long, default_value_t = 0)]
+    debug: u8,
 }
 
 struct Client {
@@ -132,8 +132,9 @@ async fn main() {
         port,
         timeout: time_out_seconds,
         wait_timeout,
-        dev: debug,
+        debug,
     } = args;
+    let debug = if debug == 0 { false } else { true };
     let pub_service_port: u16 = port;
     let control_service_port: u16 = control;
     // 代理客户端和服务器之间代理数据的传输端口
