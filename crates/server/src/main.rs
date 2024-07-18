@@ -20,6 +20,14 @@ struct Args {
     /// The public port for internet
     #[arg(short, long)]
     port: u16,
+
+    /// how long second we wait user to send the data each time
+    #[arg(long, default_value_t = 60)]
+    timeout: u64,
+
+    /// how long second we wait client to establish the transport connection
+    #[arg(long, default_value_t = 10)]
+    wait_timeout: u64,
 }
 
 struct Client {
@@ -99,6 +107,8 @@ async fn main() {
         control,
         transport,
         port,
+        timeout: time_out_seconds,
+        wait_timeout,
     } = args;
     let pub_service_port: u16 = port;
     let control_service_port: u16 = control;
@@ -149,7 +159,10 @@ async fn main() {
                                 dest_str.clone(),
                                 tokio::spawn(async move {
                                     //10秒内如果没有成功创建通信连接，则删除用户
-                                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                                    tokio::time::sleep(std::time::Duration::from_secs(
+                                        wait_timeout,
+                                    ))
+                                    .await;
                                     println!("执行了remove操作 {identifier}");
                                     if let Some(sender) = sender_weak.upgrade() {
                                         _ = sender.send(Event::RemoveUser(identifier)).await;
@@ -172,7 +185,7 @@ async fn main() {
                             let command = build_package(payload, dest);
                             let writer = &mut peer.writer;
                             let timeout = tokio::time::timeout(
-                                std::time::Duration::from_secs(5),
+                                std::time::Duration::from_secs(time_out_seconds),
                                 writer.write_all(&command[..]),
                             );
                             match timeout.await {
@@ -301,7 +314,7 @@ async fn main() {
                     tokio::spawn(async move {
                         loop {
                             let timeout = tokio::time::timeout(
-                                std::time::Duration::from_secs(60),
+                                std::time::Duration::from_secs(time_out_seconds),
                                 read_package(&mut reader),
                             );
                             match timeout.await {
@@ -309,7 +322,7 @@ async fn main() {
                                     // 身份信息
                                     let dest = String::from_utf8_lossy(&dest).to_string();
                                     let timeout = tokio::time::timeout(
-                                        std::time::Duration::from_secs(60),
+                                        std::time::Duration::from_secs(time_out_seconds),
                                         read_package(&mut reader),
                                     );
                                     //数据包

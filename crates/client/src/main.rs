@@ -29,6 +29,10 @@ struct Args {
     /// how many numbers the client tries to connect server after disconnection
     #[arg(short, long, default_value_t = 5)]
     retry: u8,
+
+    /// how long second we wait user to send the data each time
+    #[arg(long, default_value_t = 60)]
+    timeout: u64,
 }
 
 fn build_package(payload: Vec<u8>, dest: SocketAddr) -> Vec<u8> {
@@ -63,9 +67,9 @@ async fn read_package(reader: &mut ReadHalf<TcpStream>) -> std::io::Result<Vec<u
     Err(Error::new(ErrorKind::Other, "read header error"))
 }
 
-fn now_time()->String{
-	let now = chrono::Local::now();
-	now.naive_local().format("%Y-%m-%d %H:%M:%S").to_string()
+fn now_time() -> String {
+    let now = chrono::Local::now();
+    now.naive_local().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 #[tokio::main]
@@ -77,6 +81,7 @@ async fn main() {
         transport,
         target,
         retry,
+        timeout: time_out_seconds,
     } = args;
     // 控制服务端口
     let control_service_port: u16 = control;
@@ -124,7 +129,11 @@ async fn main() {
                 // 读取远程第一次的数据包，可能为空
                 match read_package(&mut reader).await {
                     Ok(payload) => {
-                        println!("{}首次从{dest}接受数据, 包大小{}字节", now_time(),payload.len());
+                        println!(
+                            "{}首次从{dest}接受数据, 包大小{}字节",
+                            now_time(),
+                            payload.len()
+                        );
                         if let Err(_) = udp.send(&payload).await {
                             continue;
                         }
@@ -181,30 +190,44 @@ async fn main() {
                         loop {
                             // 不应该超过1分钟没有数据请求
                             let timeout = tokio::time::timeout(
-                                std::time::Duration::from_secs(60),
+                                std::time::Duration::from_secs(time_out_seconds),
                                 read_package(&mut stream_reader),
                             );
-                            if let Ok(Ok(_)) = timeout.await {
-                                //忽略传过来的身份信息，身份信息由闭包记录了
-                                let timeout = tokio::time::timeout(
-                                    std::time::Duration::from_secs(60),
-                                    read_package(&mut stream_reader),
-                                );
-                                match timeout.await {
-                                    Ok(Ok(payload)) => {
-                                        println!("{} 从{dest}接收到数据包, 包大小{}字节",now_time(),payload.len());
-                                        if let Err(_) = udp2.send(&payload).await {
+                            match timeout.await {
+                                Ok(Ok(_)) => {
+                                    //忽略传过来的身份信息，身份信息由闭包记录了
+                                    let timeout = tokio::time::timeout(
+                                        std::time::Duration::from_secs(time_out_seconds),
+                                        read_package(&mut stream_reader),
+                                    );
+                                    match timeout.await {
+                                        Ok(Ok(payload)) => {
+                                            println!(
+                                                "{} 从{dest}接收到数据包, 包大小{}字节",
+                                                now_time(),
+                                                payload.len()
+                                            );
+                                            if let Err(_) = udp2.send(&payload).await {
+                                                break;
+                                            }
+                                        }
+                                        e => {
+                                            println!(
+                                                "{} 与远程{dest}的数据交换通道异常，原因:{e:?}",
+                                                now_time()
+                                            );
                                             break;
                                         }
                                     }
-                                    e => {
-										println!("{} 与远程{dest}的数据交换通道异常，原因:{e:?}",now_time());
-                                        break;
-                                    }
                                 }
-                            } else {
-                                break;
-                            }
+                                e => {
+                                    println!(
+                                        "{} 与远程{dest}的数据交换通道异常，原因:{e:?}",
+                                        now_time()
+                                    );
+                                    break;
+                                }
+                            };
                         }
                     });
                 });
