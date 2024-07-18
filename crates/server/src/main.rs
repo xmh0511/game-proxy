@@ -77,19 +77,31 @@ async fn read_package(reader: &mut ReadHalf<TcpStream>) -> std::io::Result<Vec<u
     use std::io::{Error, ErrorKind};
     let mut buf_for_size = [0u8; 4];
     // 读取信息长度,i32大端表示
-    if let Ok(header_size) = reader.read_exact(&mut buf_for_size).await {
-        if header_size == 0 {
-            return Err(Error::new(ErrorKind::NotConnected, ""));
+    match reader.read_exact(&mut buf_for_size).await {
+        Ok(header_size) => {
+            if header_size == 0 {
+                return Err(Error::new(ErrorKind::NotConnected, ""));
+            }
+            let size = i32::from_be_bytes(buf_for_size);
+            let mut buf = vec![0u8; size as usize];
+            //读取信息主体
+            match reader.read_exact(&mut buf).await {
+                Ok(_) => return Ok(buf),
+                Err(e) => {
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        format!("read body error {e:?}"),
+                    ));
+                }
+            }
         }
-        let size = i32::from_be_bytes(buf_for_size);
-        let mut buf = vec![0u8; size as usize];
-        //读取信息主体
-        if let Ok(_read_size) = reader.read_exact(&mut buf).await {
-            return Ok(buf);
+        Err(e) => {
+            return Err(Error::new(
+                ErrorKind::Other,
+                format!("read header error {e:?}"),
+            ));
         }
-        return Err(Error::new(ErrorKind::Other, "read body error"));
     }
-    Err(Error::new(ErrorKind::Other, "read header error"))
 }
 
 macro_rules! dprintln {
@@ -163,7 +175,7 @@ async fn main() {
                                         wait_timeout,
                                     ))
                                     .await;
-                                    println!("执行了remove操作 {identifier}");
+                                    println!("执行了remove操作 {identifier}, 由于规定时间内没有建立数据信道");
                                     if let Some(sender) = sender_weak.upgrade() {
                                         _ = sender.send(Event::RemoveUser(identifier)).await;
                                     }
@@ -190,13 +202,16 @@ async fn main() {
                             );
                             match timeout.await {
                                 Ok(Ok(_)) => {}
-                                _ => {
+                                e => {
                                     //连接出现错误，关闭连接
                                     let _ = writer.shutdown().await;
                                     //删除该连接
                                     peer_map.remove(&dest_str);
                                     // 从user_map中删除
-                                    println!("从user_map中删除 {dest_str} at line {}", line!());
+                                    println!(
+                                        "从user_map中删除 {dest_str} at line {} {e:?}",
+                                        line!()
+                                    );
                                     user_map.remove(&dest_str);
                                 }
                             }
@@ -222,7 +237,7 @@ async fn main() {
                 Event::PeerCon(peer) => {
                     //代理客户端对用户首次UDP请求成功创建了映射和数据包连接
                     //取消检查计时
-                    dprintln!("{} 完成了连接建立", peer.dest);
+                    println!("{} 完成了连接建立", peer.dest);
                     check_communication.get(&peer.dest).inspect(|h| h.abort());
                     peer_map.insert(peer.dest.clone(), peer);
                 }
@@ -241,7 +256,7 @@ async fn main() {
                     check_communication.clear();
                 }
                 Event::RemoveUser(dest) => {
-                    dprintln!("从user_map中删除 {dest} at line {}", line!());
+                    println!("从user_map中删除 {dest} at line {}", line!());
                     user_map.remove(&dest);
                     peer_map.remove(&dest);
                 }

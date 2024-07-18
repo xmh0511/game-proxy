@@ -52,19 +52,31 @@ async fn read_package(reader: &mut ReadHalf<TcpStream>) -> std::io::Result<Vec<u
     use std::io::{Error, ErrorKind};
     let mut buf_for_size = [0u8; 4];
     // 读取信息长度,i32大端表示
-    if let Ok(header_size) = reader.read_exact(&mut buf_for_size).await {
-        if header_size == 0 {
-            return Err(Error::new(ErrorKind::NotConnected, ""));
+    match reader.read_exact(&mut buf_for_size).await {
+        Ok(header_size) => {
+            if header_size == 0 {
+                return Err(Error::new(ErrorKind::NotConnected, ""));
+            }
+            let size = i32::from_be_bytes(buf_for_size);
+            let mut buf = vec![0u8; size as usize];
+            //读取信息主体
+            match reader.read_exact(&mut buf).await {
+                Ok(_) => return Ok(buf),
+                Err(e) => {
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        format!("read body error {e:?}"),
+                    ));
+                }
+            }
         }
-        let size = i32::from_be_bytes(buf_for_size);
-        let mut buf = vec![0u8; size as usize];
-        //读取信息主体
-        if let Ok(_read_size) = reader.read_exact(&mut buf).await {
-            return Ok(buf);
+        Err(e) => {
+            return Err(Error::new(
+                ErrorKind::Other,
+                format!("read header error {e:?}"),
+            ));
         }
-        return Err(Error::new(ErrorKind::Other, "read body error"));
     }
-    Err(Error::new(ErrorKind::Other, "read header error"))
 }
 
 fn now_time() -> String {
@@ -171,7 +183,7 @@ async fn main() {
                     }
                     let udp1 = udp_copy.clone();
                     // 接受本地UDP服务的响应并发送到远程服务器
-                    tokio::spawn(async move {
+                    let writer_handler = tokio::spawn(async move {
                         let mut buf = [0u8; u16::MAX as usize];
                         loop {
                             let size = udp1.recv(&mut buf).await?;
@@ -229,6 +241,7 @@ async fn main() {
                                 }
                             };
                         }
+                        writer_handler.abort();
                     });
                 });
             } else {
