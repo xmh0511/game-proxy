@@ -125,6 +125,18 @@ async fn main() {
         };
         let (mut reader, mut _writer) = tokio::io::split(stream);
 
+		let writer_task = tokio::spawn(async move {
+			loop{
+				tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+				match _writer.write_all(b"0").await{
+					Ok(_)=>{}
+					Err(_)=>{
+						break;
+					}
+				}
+			}
+		});
+
         loop {
             match read_package(&mut reader).await {
                 Ok(dest) => {
@@ -258,6 +270,7 @@ async fn main() {
                 }
                 Err(e) => {
                     println!("control connection error {e:?}");
+					writer_task.abort();
                     continue 'Reconn;
                 }
             }
