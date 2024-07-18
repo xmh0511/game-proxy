@@ -15,7 +15,7 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let udp = UdpSocket::bind("0.0.0.0:0").unwrap();
+    let udp = UdpSocket::bind("0.0.0.0:7080").unwrap();
     udp.connect(format!("{}", args.server)).unwrap();
     udp.send(args.text.as_bytes()).unwrap();
     let mut buf = [0u8; u16::MAX as usize];
