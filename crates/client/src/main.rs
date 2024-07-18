@@ -119,6 +119,7 @@ async fn main() {
                 // 读取远程第一次的数据包，可能为空
                 match read_package(&mut reader).await {
                     Ok(payload) => {
+                        println!("first recv packet from {dest} len: {}", payload.len());
                         if let Err(_) = udp.send(&payload).await {
                             continue;
                         }
@@ -131,69 +132,75 @@ async fn main() {
                         }
                     }
                 }
-                // 创建player到服务器时对应的代理到服务器的通道
-                let stream =
-                    match TcpStream::connect(format!("{server_ip}:{proxy_packet_port}")).await {
-                        Ok(s) => s,
-                        Err(_) => {
-                            continue;
-                        }
+                let udp_copy = udp.clone();
+                let use_server_ip = server_ip.clone();
+                tokio::spawn(async move {
+                    // 创建player到服务器时对应的代理到服务器的通道
+                    let stream =
+                        match TcpStream::connect(format!("{use_server_ip}:{proxy_packet_port}"))
+                            .await
+                        {
+                            Ok(s) => s,
+                            Err(_) => {
+                                return;
+                            }
+                        };
+                    let (mut stream_reader, mut stream_writer) = tokio::io::split(stream);
+                    // 上报该连接对应的身份信息
+                    let Ok(dest) = dest.parse::<SocketAddr>() else {
+                        return;
                     };
-                let (mut stream_reader, mut stream_writer) = tokio::io::split(stream);
-                // 上报该连接对应的身份信息
-                let Ok(dest) = dest.parse::<SocketAddr>() else {
-                    continue;
-                };
-                let identifier = build_package(Vec::new(), dest);
-                if let Err(_) = stream_writer.write_all(&identifier[..]).await {
-                    //发送身份信息失败
-                    continue;
-                }
-
-                let udp1 = udp.clone();
-                // 接受本地UDP服务的响应并发送到远程服务器
-                tokio::spawn(async move {
-                    let mut buf = [0u8; u16::MAX as usize];
-                    loop {
-                        let size = udp1.recv(&mut buf).await?;
-                        //println!("client {dest}");
-                        let package = build_package(buf[..size].to_owned(), dest);
-                        //println!("read some payload from udp {}", package.len());
-                        stream_writer.write_all(&package[..]).await?;
-                        //println!("{r:?}");
+                    let identifier = build_package(Vec::new(), dest);
+                    if let Err(_) = stream_writer.write_all(&identifier[..]).await {
+                        //发送身份信息失败
+                        return;
                     }
-                    #[allow(unreachable_code)]
-                    Ok::<(), std::io::Error>(())
-                });
-                let udp2 = udp.clone();
-                // 读取远程服务器代理到本地的UDP数据包
-                tokio::spawn(async move {
-                    loop {
-                        // 不应该超过1分钟没有数据请求
-                        let timeout = tokio::time::timeout(
-                            std::time::Duration::from_secs(60),
-                            read_package(&mut stream_reader),
-                        );
-                        if let Ok(Ok(_)) = timeout.await {
-                            //忽略传过来的身份信息，身份信息由闭包记录了
+                    let udp1 = udp_copy.clone();
+                    // 接受本地UDP服务的响应并发送到远程服务器
+                    tokio::spawn(async move {
+                        let mut buf = [0u8; u16::MAX as usize];
+                        loop {
+                            let size = udp1.recv(&mut buf).await?;
+                            //println!("client {dest}");
+                            let package = build_package(buf[..size].to_owned(), dest);
+                            //println!("read some payload from udp {}", package.len());
+                            stream_writer.write_all(&package[..]).await?;
+                            //println!("{r:?}");
+                        }
+                        #[allow(unreachable_code)]
+                        Ok::<(), std::io::Error>(())
+                    });
+                    let udp2 = udp_copy.clone();
+                    // 读取远程服务器代理到本地的UDP数据包
+                    tokio::spawn(async move {
+                        loop {
+                            // 不应该超过1分钟没有数据请求
                             let timeout = tokio::time::timeout(
                                 std::time::Duration::from_secs(60),
                                 read_package(&mut stream_reader),
                             );
-                            match timeout.await {
-                                Ok(Ok(payload)) => {
-                                    if let Err(_) = udp2.send(&payload).await {
+                            if let Ok(Ok(_)) = timeout.await {
+                                //忽略传过来的身份信息，身份信息由闭包记录了
+                                let timeout = tokio::time::timeout(
+                                    std::time::Duration::from_secs(60),
+                                    read_package(&mut stream_reader),
+                                );
+                                match timeout.await {
+                                    Ok(Ok(payload)) => {
+                                        println!("recv packet from {dest} len:{}", payload.len());
+                                        if let Err(_) = udp2.send(&payload).await {
+                                            break;
+                                        }
+                                    }
+                                    _ => {
                                         break;
                                     }
                                 }
-                                _ => {
-                                    break;
-                                }
+                            } else {
+                                break;
                             }
-                        } else {
-                            break;
                         }
-                    }
+                    });
                 });
             } else {
                 //panic!("an error occurs on the connection");

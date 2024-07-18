@@ -345,6 +345,7 @@ async fn main() {
     let mut buf = [0u8; u16::MAX as usize];
     while let Ok((size, from)) = socket.recv_from(&mut buf).await {
         dprintln!("udp packet from who {from}");
+        println!("recv packet from {from} len:{size}");
         let _ = sender
             .send(Event::UserSide(Client {
                 payload: buf[..size].to_owned(),
