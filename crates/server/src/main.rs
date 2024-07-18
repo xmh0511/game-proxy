@@ -169,6 +169,7 @@ async fn main() {
                             //dprintln!("控制客户端创建对应连接");
                             //控制代理客户端创建对应的udp socket和数据包传输连接
                             let command = build_package(payload, dest);
+                            debug_p!(debug, "向客户端发送创建通信连接的命令 {}", dest_str);
                             //控制连接出现问题，那么情况所有状态，因为后续服务都不能正常提供
                             if let Err(e) = stream.write_all(&command[..]).await {
                                 // 尝试关闭该控制连接
@@ -182,6 +183,7 @@ async fn main() {
                                 peer_map.clear();
                                 continue;
                             }
+                            debug_p!(debug, "向客户端发送命令完成 {}", dest_str);
                             let sender_weak = weak_sender.clone();
                             let identifier = dest_str.clone();
                             check_communication.insert(
