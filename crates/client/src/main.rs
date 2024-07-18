@@ -174,11 +174,13 @@ async fn main() {
                     let (mut stream_reader, mut stream_writer) = tokio::io::split(stream);
                     // 上报该连接对应的身份信息
                     let Ok(dest) = dest.parse::<SocketAddr>() else {
+                        println!("获取的身份错误!!!!!!");
                         return;
                     };
                     let identifier = build_package(Vec::new(), dest);
-                    if let Err(_) = stream_writer.write_all(&identifier[..]).await {
+                    if let Err(e) = stream_writer.write_all(&identifier[..]).await {
                         //发送身份信息失败
+                        println!("发送身份信息{dest}失败 {e:?}");
                         return;
                     }
                     let udp1 = udp_copy.clone();
