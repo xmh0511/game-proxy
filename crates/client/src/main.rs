@@ -31,7 +31,7 @@ struct Args {
     retry: u8,
 
     /// how long second we wait user to send the data each time
-    #[arg(long, default_value_t = 60)]
+    #[arg(long, default_value_t = 10)]
     timeout: u64,
 }
 
