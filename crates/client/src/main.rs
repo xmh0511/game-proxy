@@ -167,7 +167,8 @@ async fn main() {
                             .await
                         {
                             Ok(s) => s,
-                            Err(_) => {
+                            Err(e) => {
+                                println!("为{dest}创建数据连接失败 {e:?}");
                                 return;
                             }
                         };
@@ -227,8 +228,9 @@ async fn main() {
                                         }
                                         e => {
                                             println!(
-                                                "{} 与远程{dest}的数据交换通道异常，原因:{e:?}",
-                                                now_time()
+                                                "{} 与远程{dest}的数据交换通道异常，原因:{e:?} at {}",
+                                                now_time(),
+												line!()
                                             );
                                             break;
                                         }
@@ -236,8 +238,9 @@ async fn main() {
                                 }
                                 e => {
                                     println!(
-                                        "{} 与远程{dest}的数据交换通道异常，原因:{e:?}",
-                                        now_time()
+                                        "{} 与远程{dest}的数据交换通道异常，原因:{e:?} at {}",
+                                        now_time(),
+                                        line!()
                                     );
                                     break;
                                 }

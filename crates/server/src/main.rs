@@ -29,8 +29,8 @@ struct Args {
     #[arg(long, default_value_t = 10)]
     wait_timeout: u64,
 
-	#[arg(short, long, default_value_t = false)]
-	debug:bool
+    #[arg(short, long, default_value_t = false)]
+    debug: bool,
 }
 
 struct Client {
@@ -132,7 +132,7 @@ async fn main() {
         port,
         timeout: time_out_seconds,
         wait_timeout,
-		debug,
+        debug,
     } = args;
     let pub_service_port: u16 = port;
     let control_service_port: u16 = control;
@@ -163,7 +163,7 @@ async fn main() {
                     let dest_str = dest.to_string();
                     //是否有记录，如果没有记录代表首次请求，记录到user_map中
                     if user_map.get(&dest_str).is_none() {
-                        debug_p!(debug,"{}的首次连接", dest_str);
+                        debug_p!(debug, "{}的首次连接", dest_str);
                         if let Some(stream) = &mut control_stream {
                             //dprintln!("控制客户端创建对应连接");
                             //控制代理客户端创建对应的udp socket和数据包传输连接
@@ -221,7 +221,7 @@ async fn main() {
                                     peer_map.remove(&dest_str);
                                     // 从user_map中删除
                                     debug_p!(
-										debug,
+                                        debug,
                                         "从user_map中删除 {dest_str} at line {} {e:?}",
                                         line!()
                                     );
@@ -250,13 +250,13 @@ async fn main() {
                 Event::PeerCon(peer) => {
                     //代理客户端对用户首次UDP请求成功创建了映射和数据包连接
                     //取消检查计时
-                    debug_p!(debug,"{} 完成了数据连接建立", peer.dest);
+                    debug_p!(debug, "{} 完成了数据连接建立", peer.dest);
                     check_communication.get(&peer.dest).inspect(|h| h.abort());
                     peer_map.insert(peer.dest.clone(), peer);
                 }
                 Event::ConrolErr => {
                     //控制连接出现问题，清理所有信息
-                    debug_p!(debug,"控制连接出现问题，清理所有信息");
+                    debug_p!(debug, "控制连接出现问题，清理所有信息");
                     if let Some(stream) = &mut control_stream {
                         let _ = stream.shutdown().await;
                     }
@@ -269,7 +269,7 @@ async fn main() {
                     check_communication.clear();
                 }
                 Event::RemoveUser(dest) => {
-                    debug_p!(debug,"从user_map中删除 {dest} at line {}", line!());
+                    debug_p!(debug, "从user_map中删除 {dest} at line {}", line!());
                     user_map.remove(&dest);
                     peer_map.remove(&dest);
                 }
@@ -283,7 +283,7 @@ async fn main() {
         .unwrap();
     tokio::spawn(async move {
         while let Ok((stream, _from)) = tcp.accept().await {
-            debug_p!(debug,"new control connection!!!!");
+            debug_p!(debug, "new control connection!!!!");
             let (mut reader, writer) = tokio::io::split(stream);
             let _ = sender2.send(Event::Control(writer)).await;
             let sender3 = sender2.clone();
@@ -361,7 +361,11 @@ async fn main() {
                                                 .await;
                                         }
                                         e => {
-                                            debug_p!(debug,"read error {e:?} for {dest_record} at line {}",line!());
+                                            debug_p!(
+                                                debug,
+                                                "read error {e:?} for {dest_record} at line {}",
+                                                line!()
+                                            );
                                             let _ = sender4
                                                 .send(Event::RemoveUser(dest_record.clone()))
                                                 .await;
@@ -370,7 +374,11 @@ async fn main() {
                                     }
                                 }
                                 e => {
-                                    debug_p!(debug, "read error {e:?} for {dest_record} at line {}",line!());
+                                    debug_p!(
+                                        debug,
+                                        "read error {e:?} for {dest_record} at line {}",
+                                        line!()
+                                    );
                                     let _ =
                                         sender4.send(Event::RemoveUser(dest_record.clone())).await;
                                     break;
@@ -389,7 +397,7 @@ async fn main() {
         let mut buf = [0u8; u16::MAX as usize];
         while let Ok((size, from)) = socket.recv_from(&mut buf).await {
             //dprintln!("udp packet from who {from}");
-            debug_p!(debug,"recv packet from {from} len:{size}");
+            debug_p!(debug, "recv packet from {from} len:{size}");
             let _ = sender
                 .send(Event::UserSide(Client {
                     payload: buf[..size].to_owned(),
