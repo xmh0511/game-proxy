@@ -303,6 +303,7 @@ async fn main() {
         .unwrap();
     tokio::spawn(async move {
         let mut keepalive_task: Option<JoinHandle<()>> = None;
+		let mut monitor_heart:Option<JoinHandle<()>>= None;
         while let Ok((stream, _from)) = tcp.accept().await {
             debug_p!(debug, "new control connection!!!!");
             let (mut reader, writer) = tokio::io::split(stream);
@@ -322,6 +323,9 @@ async fn main() {
             if let Some(h) = &keepalive_task {
                 h.abort();
             }
+			if let Some(h) = &monitor_heart{
+				h.abort();
+			}
             let _ = sender2.send(Event::Control(writer)).await;
             let ping_pong_sender = sender2.clone();
             keepalive_task = Some(tokio::spawn(async move {
@@ -331,7 +335,7 @@ async fn main() {
                 }
             }));
             let sender3 = sender2.clone();
-            tokio::spawn(async move {
+            monitor_heart = Some(tokio::spawn(async move {
                 //处理客户端到服务器的心跳包
                 let mut buf = [0; 4];
                 loop {
@@ -352,16 +356,8 @@ async fn main() {
                             break;
                         }
                     }
-                    // if let Some(dest) = read_package(&mut reader).await {
-                    //     let dest = String::from_utf8_lossy(&dest).to_string();
-                    //     if let Some(payload) = read_package(&mut reader).await {
-                    //         let _ = sender3
-                    //             .send(Event::Response(Response { payload, dest }))
-                    //             .await;
-                    //     }
-                    // }
                 }
-            });
+            }));
         }
     });
 
@@ -373,9 +369,23 @@ async fn main() {
         while let Ok((stream, _from)) = tcp.accept().await {
             let (mut reader, writer) = tokio::io::split(stream);
             //建立连接后，代理客户端向服务器发送身份信息
-            match read_package(&mut reader).await {
-                Ok(dest) => {
-                    let _ = read_package(&mut reader).await; //empty payload
+			let task1 = tokio::time::timeout(
+				std::time::Duration::from_secs(wait_timeout),
+				read_package(&mut reader),
+			);
+            match task1.await {
+                Ok(Ok(dest)) => {
+					let task2 = tokio::time::timeout(
+						std::time::Duration::from_secs(wait_timeout),
+						read_package(&mut reader),
+					);
+                    match task2.await{
+						Ok(Ok(_))=>{}
+						e=>{
+							debug_p!(debug,"代理客户端向服务器建立通信连接读body时出错 {e:?}");
+							continue;
+						}
+					}; //empty payload
                     let dest = String::from_utf8_lossy(&dest).to_string();
                     if dest.is_empty() {}
                     //通道建立完成
@@ -436,7 +446,9 @@ async fn main() {
                         }
                     });
                 }
-                Err(_) => {}
+                e => {
+					debug_p!(debug,"代理客户端向服务器建立通信连接读头时出错 {e:?}");
+				}
             }
         }
     });
