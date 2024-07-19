@@ -4,6 +4,7 @@ use clap::Parser;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf},
     net::{TcpListener, TcpStream, UdpSocket},
+    task::JoinHandle,
 };
 
 #[derive(Parser, Debug)]
@@ -29,8 +30,13 @@ struct Args {
     #[arg(long, default_value_t = 10)]
     wait_timeout: u64,
 
+    /// set debug mode 1 or 0
     #[arg(short, long, default_value_t = 0)]
     debug: u8,
+
+    /// The authorized key for control connection
+    #[arg(short, long, default_value_t = String::from("88888888"))]
+    key: String,
 }
 
 struct Client {
@@ -62,6 +68,7 @@ enum Event {
     PeerCon(Peer),
     RemoveUser(String),
     ConrolErr,
+    KeepAlive,
 }
 fn build_package(payload: Vec<u8>, dest: SocketAddr) -> Vec<u8> {
     let mut command = Vec::new();
@@ -133,6 +140,7 @@ async fn main() {
         timeout: time_out_seconds,
         wait_timeout,
         debug,
+        key: conection_key,
     } = args;
     let debug = if debug == 0 { false } else { true };
     let pub_service_port: u16 = port;
@@ -280,6 +288,11 @@ async fn main() {
                     user_map.remove(&dest);
                     peer_map.remove(&dest);
                 }
+                Event::KeepAlive => {
+                    if let Some(stream) = &mut control_stream {
+                        let _ = stream.write_all(&0i32.to_be_bytes()).await;
+                    }
+                }
             }
         }
     });
@@ -289,23 +302,52 @@ async fn main() {
         .await
         .unwrap();
     tokio::spawn(async move {
+        let mut keepalive_task: Option<JoinHandle<()>> = None;
         while let Ok((stream, _from)) = tcp.accept().await {
             debug_p!(debug, "new control connection!!!!");
             let (mut reader, writer) = tokio::io::split(stream);
+            let mut key_buf = [0; 8];
+            let Ok(Ok(_)) = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                reader.read_exact(&mut key_buf),
+            )
+            .await
+            else {
+                continue;
+            };
+            // 不合法的连接
+            if String::from_utf8_lossy(&key_buf).to_string() != conection_key {
+                continue;
+            }
+            if let Some(h) = &keepalive_task {
+                h.abort();
+            }
             let _ = sender2.send(Event::Control(writer)).await;
+            let ping_pong_sender = sender2.clone();
+            keepalive_task = Some(tokio::spawn(async move {
+                loop {
+                    let _ = ping_pong_sender.send(Event::KeepAlive).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                }
+            }));
             let sender3 = sender2.clone();
             tokio::spawn(async move {
-                let mut buf = [0; 256];
+                //处理客户端到服务器的心跳包
+                let mut buf = [0; 4];
                 loop {
-                    match reader.read(&mut buf).await {
-                        Ok(size) => {
+                    let task_time_out = tokio::time::timeout(
+                        std::time::Duration::from_secs(wait_timeout),
+                        reader.read_exact(&mut buf),
+                    );
+                    match task_time_out.await {
+                        Ok(Ok(size)) => {
                             // 代理服务器关闭了控制连接
                             if size == 0 {
                                 let _ = sender3.send(Event::ConrolErr).await;
                                 break;
                             }
                         }
-                        Err(_) => {
+                        _ => {
                             let _ = sender3.send(Event::ConrolErr).await;
                             break;
                         }

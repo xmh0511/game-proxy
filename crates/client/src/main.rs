@@ -33,8 +33,18 @@ struct Args {
     /// how long second we wait user to send the data each time
     #[arg(long, default_value_t = 10)]
     timeout: u64,
+
+    /// how long second we wait keepalive packet
+    #[arg(long, default_value_t = 10)]
+    interval: u64,
+
+    /// The authorized key for control connection
+    #[arg(short, long, default_value_t = String::from("88888888"))]
+    key: String,
 }
 
+// 构造正常的命令包
+// len:i32 identity len:i32 payload
 fn build_package(payload: Vec<u8>, dest: SocketAddr) -> Vec<u8> {
     let mut command = Vec::new();
     let dest_str = dest.to_string();
@@ -79,6 +89,56 @@ async fn read_package(reader: &mut ReadHalf<TcpStream>) -> std::io::Result<Vec<u
     }
 }
 
+enum Comand {
+    Ctrl(Vec<u8>),
+    KeepAlive,
+}
+
+async fn read_command(reader: &mut ReadHalf<TcpStream>, timeout: u64) -> std::io::Result<Comand> {
+    use std::io::{Error, ErrorKind};
+    let mut buf_for_size = [0u8; 4];
+    let task_time_out = tokio::time::timeout(
+        std::time::Duration::from_secs(timeout),
+        reader.read_exact(&mut buf_for_size),
+    );
+    // 读取信息长度,i32大端表示
+    match task_time_out.await {
+        Ok(Ok(header_size)) => {
+            if header_size == 0 {
+                return Err(Error::new(ErrorKind::NotConnected, ""));
+            }
+            let size = i32::from_be_bytes(buf_for_size);
+            //心跳包
+            if size == 0 {
+                return Ok(Comand::KeepAlive);
+            }
+            let mut buf = vec![0u8; size as usize];
+            //读取信息主体
+            match reader.read_exact(&mut buf).await {
+                Ok(_) => return Ok(Comand::Ctrl(buf)),
+                Err(e) => {
+                    return Err(Error::new(
+                        ErrorKind::Other,
+                        format!("read command body error {e:?}"),
+                    ));
+                }
+            }
+        }
+        Ok(Err(e)) => {
+            return Err(Error::new(
+                ErrorKind::Other,
+                format!("read command header error {e:?}"),
+            ));
+        }
+        Err(e) => {
+            return Err(Error::new(
+                ErrorKind::Other,
+                format!("read command header error {e:?}"),
+            ));
+        }
+    }
+}
+
 fn now_time() -> String {
     let now = chrono::Local::now();
     now.naive_local().format("%Y-%m-%d %H:%M:%S").to_string()
@@ -94,6 +154,8 @@ async fn main() {
         target,
         retry,
         timeout: time_out_seconds,
+        interval,
+        key: connection_key,
     } = args;
     // 控制服务端口
     let control_service_port: u16 = control;
@@ -109,7 +171,10 @@ async fn main() {
         }
         //尝试连接服务器，如果失败直接报错
         let stream = match TcpStream::connect(format!("{server_ip}:{control_service_port}")).await {
-            Ok(s) => {
+            Ok(mut s) => {
+                if let Err(_) = s.write_all(connection_key.as_bytes()).await {
+                    continue 'Reconn;
+                }
                 println!("连接{server_ip}:{control_service_port}服务器成功");
                 count_retry = 0;
                 s
@@ -125,21 +190,24 @@ async fn main() {
         };
         let (mut reader, mut _writer) = tokio::io::split(stream);
 
-		let writer_task = tokio::spawn(async move {
-			loop{
-				tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-				match _writer.write_all(b"0").await{
-					Ok(_)=>{}
-					Err(_)=>{
-						break;
-					}
-				}
-			}
-		});
+        // 向服务器写心跳包
+        let writer_task = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let data = 0i32.to_be_bytes();
+                match _writer.write_all(&data).await {
+                    Ok(_) => {}
+                    Err(_) => {
+                        break;
+                    }
+                }
+            }
+        });
 
         loop {
-            match read_package(&mut reader).await {
-                Ok(dest) => {
+            // 读取服务器发送过来的命令
+            match read_command(&mut reader, interval).await {
+                Ok(Comand::Ctrl(dest)) => {
                     // 读取远程请求创建对应连接时发送的身份
                     let dest = String::from_utf8_lossy(&dest).to_string();
                     println!("收到远程让客户端为{dest}创建数据通道的信号");
@@ -268,9 +336,13 @@ async fn main() {
                         });
                     });
                 }
+                Ok(Comand::KeepAlive) => {
+                    //心跳包
+                    println!("{} 保活心跳包", now_time());
+                }
                 Err(e) => {
                     println!("control connection error {e:?}");
-					writer_task.abort();
+                    writer_task.abort();
                     continue 'Reconn;
                 }
             }
