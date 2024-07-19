@@ -75,7 +75,7 @@ async fn read_package(reader: &mut ReadHalf<TcpStream>) -> std::io::Result<Vec<u
                 Err(e) => {
                     return Err(Error::new(
                         ErrorKind::Other,
-                        format!("read body error {e:?}"),
+                        format!("read body error {e:?} required read size {size}"),
                     ));
                 }
             }
@@ -113,13 +113,18 @@ async fn read_command(reader: &mut ReadHalf<TcpStream>, timeout: u64) -> std::io
                 return Ok(Comand::KeepAlive);
             }
             let mut buf = vec![0u8; size as usize];
+
+            let body_task_time_out = tokio::time::timeout(
+                std::time::Duration::from_secs(timeout),
+                reader.read_exact(&mut buf),
+            );
             //读取信息主体
-            match reader.read_exact(&mut buf).await {
-                Ok(_) => return Ok(Comand::Ctrl(buf)),
-                Err(e) => {
+            match body_task_time_out.await {
+                Ok(Ok(_)) => return Ok(Comand::Ctrl(buf)),
+                e => {
                     return Err(Error::new(
                         ErrorKind::Other,
-                        format!("read command body error {e:?}"),
+                        format!("read command body error {e:?} required read size {size}"),
                     ));
                 }
             }
@@ -222,9 +227,13 @@ async fn main() {
                         println!("为{dest}创建对等的UDP客户端并进行connect时失败");
                         continue;
                     }
+                    let first_read_body = tokio::time::timeout(
+                        std::time::Duration::from_secs(time_out_seconds),
+                        read_package(&mut reader),
+                    );
                     // 读取远程第一次的数据包，可能为空
-                    match read_package(&mut reader).await {
-                        Ok(payload) => {
+                    match first_read_body.await {
+                        Ok(Ok(payload)) => {
                             println!(
                                 "{}首次从{dest}接受数据, 包大小{}字节",
                                 now_time(),
@@ -234,12 +243,20 @@ async fn main() {
                                 continue;
                             }
                         }
-                        Err(e) => {
+                        Ok(Err(e)) => {
+                            println!(
+                                "{}首次从{dest}接受数据出错，可能尝试整个重连 {:?}",
+                                now_time(),
+                                e
+                            );
                             if e.kind() == std::io::ErrorKind::NotConnected {
                                 //panic!("an error occurs on the connection");
                                 //尝试整个重新连接
                                 continue 'Reconn;
                             }
+                        }
+                        Err(e) => {
+                            println!("{}首次从{dest}接受数据出错 {:?}", now_time(), e);
                         }
                     }
                     let udp_copy = udp.clone();
