@@ -175,6 +175,7 @@ async fn main() {
             match event {
                 //代理的客户端和服务器进行控制层连接
                 Event::Control(ctrl_writer) => {
+                    debug_p!(debug, "客户端与服务器的控制连接建立成功");
                     control_stream = Some(ctrl_writer);
                 }
                 //公网用户数据包进来
@@ -468,7 +469,7 @@ async fn main() {
         let mut buf = [0u8; u16::MAX as usize];
         while let Ok((size, from)) = socket.recv_from(&mut buf).await {
             //dprintln!("udp packet from who {from}");
-            debug_p!(debug, "recv packet from {from} len:{size}");
+            //debug_p!(debug, "recv packet from {from} len:{size}");
             let _ = sender
                 .send(Event::UserSide(Client {
                     payload: buf[..size].to_owned(),
