@@ -41,6 +41,10 @@ struct Args {
     /// The authorized key for control connection
     #[arg(short, long, default_value_t = String::from("88888888"))]
     key: String,
+
+    /// The interval seconds for each ping
+    #[arg(long, default_value_t = 3)]
+    ping: u64,
 }
 
 // 构造正常的命令包
@@ -161,6 +165,7 @@ async fn main() {
         timeout: time_out_seconds,
         interval,
         key: connection_key,
+        ping: ping_time,
     } = args;
     // 控制服务端口
     let control_service_port: u16 = control;
@@ -198,7 +203,7 @@ async fn main() {
         // 向服务器写心跳包
         let writer_task = tokio::spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(ping_time)).await;
                 let data = 0i32.to_be_bytes();
                 match _writer.write_all(&data).await {
                     Ok(_) => {}

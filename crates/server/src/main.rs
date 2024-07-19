@@ -37,6 +37,14 @@ struct Args {
     /// The authorized key for control connection
     #[arg(short, long, default_value_t = String::from("88888888"))]
     key: String,
+
+    /// how long second we wait keepalive packet
+    #[arg(long, default_value_t = 10)]
+    interval: u64,
+
+    /// The interval seconds for each ping
+    #[arg(long, default_value_t = 3)]
+    ping: u64,
 }
 
 struct Client {
@@ -141,6 +149,8 @@ async fn main() {
         wait_timeout,
         debug,
         key: conection_key,
+        ping: ping_time,
+        interval,
     } = args;
     let debug = if debug == 0 { false } else { true };
     let pub_service_port: u16 = port;
@@ -303,7 +313,7 @@ async fn main() {
         .unwrap();
     tokio::spawn(async move {
         let mut keepalive_task: Option<JoinHandle<()>> = None;
-		let mut monitor_heart:Option<JoinHandle<()>>= None;
+        let mut monitor_heart: Option<JoinHandle<()>> = None;
         while let Ok((stream, _from)) = tcp.accept().await {
             debug_p!(debug, "new control connection!!!!");
             let (mut reader, writer) = tokio::io::split(stream);
@@ -323,15 +333,15 @@ async fn main() {
             if let Some(h) = &keepalive_task {
                 h.abort();
             }
-			if let Some(h) = &monitor_heart{
-				h.abort();
-			}
+            if let Some(h) = &monitor_heart {
+                h.abort();
+            }
             let _ = sender2.send(Event::Control(writer)).await;
             let ping_pong_sender = sender2.clone();
             keepalive_task = Some(tokio::spawn(async move {
                 loop {
                     let _ = ping_pong_sender.send(Event::KeepAlive).await;
-                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(ping_time)).await;
                 }
             }));
             let sender3 = sender2.clone();
@@ -340,7 +350,7 @@ async fn main() {
                 let mut buf = [0; 4];
                 loop {
                     let task_time_out = tokio::time::timeout(
-                        std::time::Duration::from_secs(wait_timeout),
+                        std::time::Duration::from_secs(interval),
                         reader.read_exact(&mut buf),
                     );
                     match task_time_out.await {
@@ -369,23 +379,23 @@ async fn main() {
         while let Ok((stream, _from)) = tcp.accept().await {
             let (mut reader, writer) = tokio::io::split(stream);
             //建立连接后，代理客户端向服务器发送身份信息
-			let task1 = tokio::time::timeout(
-				std::time::Duration::from_secs(wait_timeout),
-				read_package(&mut reader),
-			);
+            let task1 = tokio::time::timeout(
+                std::time::Duration::from_secs(wait_timeout),
+                read_package(&mut reader),
+            );
             match task1.await {
                 Ok(Ok(dest)) => {
-					let task2 = tokio::time::timeout(
-						std::time::Duration::from_secs(wait_timeout),
-						read_package(&mut reader),
-					);
-                    match task2.await{
-						Ok(Ok(_))=>{}
-						e=>{
-							debug_p!(debug,"代理客户端向服务器建立通信连接读body时出错 {e:?}");
-							continue;
-						}
-					}; //empty payload
+                    let task2 = tokio::time::timeout(
+                        std::time::Duration::from_secs(wait_timeout),
+                        read_package(&mut reader),
+                    );
+                    match task2.await {
+                        Ok(Ok(_)) => {}
+                        e => {
+                            debug_p!(debug, "代理客户端向服务器建立通信连接读body时出错 {e:?}");
+                            continue;
+                        }
+                    }; //empty payload
                     let dest = String::from_utf8_lossy(&dest).to_string();
                     if dest.is_empty() {}
                     //通道建立完成
@@ -447,8 +457,8 @@ async fn main() {
                     });
                 }
                 e => {
-					debug_p!(debug,"代理客户端向服务器建立通信连接读头时出错 {e:?}");
-				}
+                    debug_p!(debug, "代理客户端向服务器建立通信连接读头时出错 {e:?}");
+                }
             }
         }
     });
