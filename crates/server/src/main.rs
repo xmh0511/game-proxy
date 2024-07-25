@@ -1,6 +1,16 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use clap::Parser;
+use log::{error, info, trace, LevelFilter};
+use log4rs::{
+    append::{
+        console::{ConsoleAppender, Target},
+        file::FileAppender,
+    },
+    config::{Appender, Config, Root},
+    encode::pattern::PatternEncoder,
+    filter::threshold::ThresholdFilter,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf},
     net::{TcpListener, TcpStream, UdpSocket},
@@ -30,10 +40,9 @@ struct Args {
     #[arg(long, default_value_t = 10)]
     wait_timeout: u64,
 
-    /// set debug mode 1 or 0
-    #[arg(short, long, default_value_t = 0)]
-    debug: u8,
-
+    // /// set debug mode 1 or 0
+    // #[arg(short, long, default_value_t = 0)]
+    // debug: u8,
     /// The authorized key for control connection
     #[arg(short, long, default_value_t = String::from("88888888"))]
     key: String,
@@ -130,16 +139,41 @@ async fn read_package(reader: &mut ReadHalf<TcpStream>) -> std::io::Result<Vec<u
 // 	};
 // }
 
-macro_rules! debug_p {
-	($e:expr, $($t:tt)*) => {
-		if $e{
-			println!($($t)*);
-		}
-	};
-}
-
 #[tokio::main]
 async fn main() {
+    let level = log::LevelFilter::Info;
+    let file_path = "./logs/server.log";
+    let stderr = ConsoleAppender::builder().target(Target::Stderr).build();
+    let logfile = FileAppender::builder()
+        // Pattern: https://docs.rs/log4rs/*/log4rs/encode/pattern/index.html
+        .encoder(Box::new(PatternEncoder::new(
+            "[{d(%Y-%m-%d %H:%M:%S)} {l}] {m}\n",
+        )))
+        .build(file_path)
+        .unwrap();
+    // Log Trace level output to file where trace is the default level
+    // and the programmatically specified level to stderr.
+    let config = Config::builder()
+        .appender(Appender::builder().build("logfile", Box::new(logfile)))
+        .appender(
+            Appender::builder()
+                .filter(Box::new(ThresholdFilter::new(level)))
+                .build("stderr", Box::new(stderr)),
+        )
+        .build(
+            Root::builder()
+                .appender("logfile")
+                .appender("stderr")
+                .build(LevelFilter::Trace),
+        )
+        .unwrap();
+
+    // Use this to change log levels at runtime.
+    // This means you can change the default log level to trace
+    // if you are trying to debug an issue and need more logs on then turn it off
+    // once you are done.
+    let _handle = log4rs::init_config(config).unwrap();
+
     let args = Args::parse();
     let Args {
         control,
@@ -147,12 +181,11 @@ async fn main() {
         port,
         timeout: time_out_seconds,
         wait_timeout,
-        debug,
         key: conection_key,
         ping: ping_time,
         interval,
     } = args;
-    let debug = if debug == 0 { false } else { true };
+    // let debug = if debug == 0 { false } else { true };
     let pub_service_port: u16 = port;
     let control_service_port: u16 = control;
     // 代理客户端和服务器之间代理数据的传输端口
@@ -175,7 +208,7 @@ async fn main() {
             match event {
                 //代理的客户端和服务器进行控制层连接
                 Event::Control(ctrl_writer) => {
-                    debug_p!(debug, "客户端与服务器的控制连接建立成功");
+                    trace!("客户端与服务器的控制连接建立成功");
                     control_stream = Some(ctrl_writer);
                 }
                 //公网用户数据包进来
@@ -183,18 +216,17 @@ async fn main() {
                     let dest_str = dest.to_string();
                     //是否有记录，如果没有记录代表首次请求，记录到user_map中
                     if user_map.get(&dest_str).is_none() {
-                        debug_p!(debug, "{}的首次连接", dest_str);
+                        trace!("{}的首次连接", dest_str);
                         if let Some(stream) = &mut control_stream {
                             //dprintln!("控制客户端创建对应连接");
                             //控制代理客户端创建对应的udp socket和数据包传输连接
                             let command = build_package(payload, dest);
-                            debug_p!(debug, "向客户端发送创建通信连接的命令 {}", dest_str);
+                            trace!("向客户端发送为{dest_str}创建通信连接的命令");
                             //控制连接出现问题，那么情况所有状态，因为后续服务都不能正常提供
                             if let Err(e) = stream.write_all(&command[..]).await {
                                 // 尝试关闭该控制连接
-                                debug_p!(
-                                    debug,
-                                    "向客户端发送创建数据包通信连接的命令出现问题 {e:?}"
+                                error!(
+                                    "向客户端发送创建数据包通信连接的命令出现问题 {dest_str} {e:?}"
                                 );
                                 let _ = stream.shutdown().await;
                                 control_stream = None;
@@ -202,7 +234,7 @@ async fn main() {
                                 peer_map.clear();
                                 continue;
                             }
-                            debug_p!(debug, "向客户端发送命令完成 {}", dest_str);
+                            trace!("向客户端发送为{}创建数据通道命令完成", dest_str);
                             let sender_weak = weak_sender.clone();
                             let identifier = dest_str.clone();
                             check_communication.insert(
@@ -213,7 +245,7 @@ async fn main() {
                                         wait_timeout,
                                     ))
                                     .await;
-								    debug_p!(debug,"执行了remove操作 {identifier}, 由于规定时间内没有建立数据信道");
+								    error!("执行了remove操作 {identifier}, 由于规定时间内没有建立数据信道");
                                     if let Some(sender) = sender_weak.upgrade() {
                                         _ = sender.send(Event::RemoveUser(identifier)).await;
                                     }
@@ -246,11 +278,7 @@ async fn main() {
                                     //删除该连接
                                     peer_map.remove(&dest_str);
                                     // 从user_map中删除
-                                    debug_p!(
-                                        debug,
-                                        "从user_map中删除 {dest_str} at line {} {e:?}",
-                                        line!()
-                                    );
+                                    trace!("从user_map中删除 {dest_str} at line {} {e:?}", line!());
                                     user_map.remove(&dest_str);
                                 }
                             }
@@ -276,13 +304,13 @@ async fn main() {
                 Event::PeerCon(peer) => {
                     //代理客户端对用户首次UDP请求成功创建了映射和数据包连接
                     //取消检查计时
-                    debug_p!(debug, "{} 完成了数据连接建立", peer.dest);
+                    trace!("{} 完成了数据连接建立", peer.dest);
                     check_communication.get(&peer.dest).inspect(|h| h.abort());
                     peer_map.insert(peer.dest.clone(), peer);
                 }
                 Event::ConrolErr => {
                     //控制连接出现问题，清理所有信息
-                    debug_p!(debug, "控制连接出现问题，清理所有信息");
+                    error!("清理所有信息的信号");
                     if let Some(stream) = &mut control_stream {
                         let _ = stream.shutdown().await;
                     }
@@ -295,7 +323,7 @@ async fn main() {
                     check_communication.clear();
                 }
                 Event::RemoveUser(dest) => {
-                    debug_p!(debug, "从user_map中删除 {dest} at line {}", line!());
+                    trace!("从user_map中删除 {dest} at line {}", line!());
                     user_map.remove(&dest);
                     peer_map.remove(&dest);
                 }
@@ -315,8 +343,8 @@ async fn main() {
     tokio::spawn(async move {
         let mut keepalive_task: Option<JoinHandle<()>> = None;
         let mut monitor_heart: Option<JoinHandle<()>> = None;
-        while let Ok((stream, _from)) = tcp.accept().await {
-            debug_p!(debug, "new control connection!!!!");
+        while let Ok((stream, from)) = tcp.accept().await {
+            trace!("来自{from}的控制连接请求");
             let (mut reader, writer) = tokio::io::split(stream);
             let mut key_buf = [0; 8];
             let Ok(Ok(_)) = tokio::time::timeout(
@@ -325,10 +353,15 @@ async fn main() {
             )
             .await
             else {
+                error!("来自{from}的控制连接请求但在规定时间没有发送秘钥");
                 continue;
             };
+            let input_key = String::from_utf8_lossy(&key_buf).to_string();
             // 不合法的连接
-            if String::from_utf8_lossy(&key_buf).to_string() != conection_key {
+            if input_key.is_empty() || input_key != conection_key {
+                error!(
+                    "来自{from}的控制连接请求使用了无效的秘钥 string:{input_key}, buf:{key_buf:?}"
+                );
                 continue;
             }
             if let Some(h) = &keepalive_task {
@@ -337,6 +370,7 @@ async fn main() {
             if let Some(h) = &monitor_heart {
                 h.abort();
             }
+            trace!("来自{from}的控制连接请求通过验证并成功建立");
             let _ = sender2.send(Event::Control(writer)).await;
             let ping_pong_sender = sender2.clone();
             keepalive_task = Some(tokio::spawn(async move {
@@ -359,11 +393,13 @@ async fn main() {
                             // 代理服务器关闭了控制连接
                             if size == 0 {
                                 let _ = sender3.send(Event::ConrolErr).await;
+                                trace!("受控客户端{from}关闭了控制连接");
                                 break;
                             }
                         }
-                        _ => {
+                        e => {
                             let _ = sender3.send(Event::ConrolErr).await;
+                            trace!("读取受控客户端{from}心跳失败 {e:?}");
                             break;
                         }
                     }
@@ -390,15 +426,19 @@ async fn main() {
                         std::time::Duration::from_secs(wait_timeout),
                         read_package(&mut reader),
                     );
+                    // 建立数据传输连接只发送身份信息不会发送额外数据包
                     match task2.await {
                         Ok(Ok(_)) => {}
                         e => {
-                            debug_p!(debug, "代理客户端向服务器建立通信连接读body时出错 {e:?}");
+                            error!("代理客户端向服务器建立通信连接读body时出错 {e:?}");
                             continue;
                         }
                     }; //empty payload
                     let dest = String::from_utf8_lossy(&dest).to_string();
-                    if dest.is_empty() {}
+                    if dest.is_empty() {
+                        error!("代理客户端向服务器建立通信连接时未提供有效身份 string: {dest}");
+                        continue;
+                    }
                     //通道建立完成
                     let _ = sender3
                         .send(Event::PeerCon(Peer {
@@ -431,8 +471,7 @@ async fn main() {
                                                 .await;
                                         }
                                         e => {
-                                            debug_p!(
-                                                debug,
+                                            error!(
                                                 "read error {e:?} for {dest_record} at line {}",
                                                 line!()
                                             );
@@ -444,8 +483,7 @@ async fn main() {
                                     }
                                 }
                                 e => {
-                                    debug_p!(
-                                        debug,
+                                    error!(
                                         "read error {e:?} for {dest_record} at line {}",
                                         line!()
                                     );
@@ -458,7 +496,7 @@ async fn main() {
                     });
                 }
                 e => {
-                    debug_p!(debug, "代理客户端向服务器建立通信连接读头时出错 {e:?}");
+                    error!("代理客户端向服务器建立通信连接读头时出错 {e:?}");
                 }
             }
         }
@@ -486,4 +524,5 @@ async fn main() {
         .send(Event::ConrolErr)
         .await
         .expect("clear error");
+    info!("退出服务器！！！");
 }
